@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Site Volume</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header>
+        <img id="favicon" alt="" width="16" height="16" />
+        <span id="host">This tab</span>
+      </header>
+
+      <section id="unsupported" hidden>
+        <p>Chrome doesn't let extensions change sound on this page.</p>
+      </section>
+
+      <section id="controls">
+        <div class="readout">
+          <button id="mute" class="icon" title="Mute (Alt+Shift+M)" aria-label="Mute"></button>
+          <output id="value">100%</output>
+        </div>
+
+        <input id="slider" type="range" min="0" max="1000" step="1" aria-label="Volume" />
+        <div class="scale"><span>0%</span><span>100%</span><span id="maxLabel">200%</span></div>
+
+        <div class="presets" id="presets"></div>
+
+        <p id="notice" class="notice" hidden></p>
+
+        <label class="toggle">
+          <input id="remember" type="checkbox" />
+          <span>Remember for <b id="rememberHost">this site</b></span>
+        </label>
+        <p id="rememberHint" class="hint"></p>
+
+        <button id="unlock" class="link" hidden>Unlock boost up to 600%</button>
+        <div id="unlockWarn" class="warn" hidden>
+          <p><b>Protect your ears and speakers.</b> Very high boost can distort and, at high system volume, damage laptop speakers or hearing. The limiter stays on to reduce clipping.</p>
+          <div class="row"><button id="unlockYes">Unlock 600%</button><button id="unlockNo" class="ghost">Cancel</button></div>
+        </div>
+      </section>
+
+      <section id="others" hidden>
+        <h2>Other tabs playing sound</h2>
+        <ul id="otherList"></ul>
+      </section>
+
+      <footer>No ads · No tracking · Open source</footer>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

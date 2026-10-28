@@ -1,0 +1,23 @@
+{
+  "name": "site-volume",
+  "description": "Remember and boost volume per website. Full screen still works. No ads, no tracking.",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:edge": "wxt -b edge",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:edge": "wxt build -b edge",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:edge": "wxt zip -b edge",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "wxt": "0.21.4"
+  }
+}
