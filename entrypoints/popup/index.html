@@ -28,7 +28,17 @@
 
         <div class="presets" id="presets"></div>
 
-        <p id="notice" class="notice" hidden></p>
+        <div id="notice" class="notice" hidden><span id="noticeText"></span> <button id="noticeAction" class="link" hidden></button></div>
+
+        <label class="toggle">
+          <input id="even" type="checkbox" />
+          <span>Even out volume <small>(quieter loud bits, louder quiet bits)</small></span>
+        </label>
+        <label class="toggle" id="forceRow" hidden>
+          <input id="force" type="checkbox" />
+          <span>Force boost on this site</span>
+        </label>
+        <p id="forceHint" class="hint" hidden>Works on any site, including Netflix and Spotify. It captures the tab's sound, so full screen may still show browser bars and Chrome shows a "sharing" icon.</p>
 
         <label class="toggle">
           <input id="remember" type="checkbox" />
@@ -46,6 +56,10 @@
       <section id="others" hidden>
         <h2>Other tabs playing sound</h2>
         <ul id="otherList"></ul>
+        <div id="allowAll" class="warn info" hidden>
+          <p>To adjust other tabs from here, Site Volume needs access to all sites. Rather not? Switch to the tab and tick <b>Remember</b> there instead.</p>
+          <div class="row"><button id="allowAllYes">Allow on all sites</button><button id="allowAllNo" class="ghost">Not now</button></div>
+        </div>
       </section>
 
       <footer>No ads · No tracking · Open source</footer>

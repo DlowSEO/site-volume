@@ -1,21 +1,25 @@
 /**
  * Audio engine — runs inside the page (isolated world), in every frame we have access to.
  *
- * Why not chrome.tabCapture? Capturing the tab is what breaks full screen and shows
+ * Why not chrome.tabCapture by default? Capturing the tab is what breaks full screen and shows
  * "this tab's content is being shared" in other extensions. Instead we route each
- * <video>/<audio> element through Web Audio:  element → gain → limiter → speakers.
+ * <video>/<audio> element through Web Audio:  element → gain → dynamics → speakers.
+ * (Tab capture is still available as an opt-in "Force boost" per site.)
  *
- * Two safety rules, because getting these wrong produces silence ("it cut off all my sound"):
- *  1. Cross-origin media without CORS outputs silence through Web Audio. For those we never
- *     route; we fall back to element.volume (max 100%) and tell the popup boost is unavailable.
- *  2. An AudioContext that the browser hasn't allowed to start yet is silent. We only route
- *     once the context is actually running; until then we wait for a click/keypress on the page.
+ * Safety rules, because getting these wrong produces silence ("it cut off all my sound"):
+ *  1. Cross-origin media without CORS, and DRM-protected media, output silence through Web Audio.
+ *     For those we never route; we fall back to element.volume (max 100%) and tell the popup.
+ *  2. An AudioContext the browser hasn't allowed to start is silent. We only route once the
+ *     context is actually running; until then we wait for a click/keypress on the page.
+ *  3. We only decide once an element is actually playing, so the real source and any DRM keys
+ *     are attached.
  *
- * At 100% and unmuted we don't touch the page at all.
+ * At 100%, unmuted, with "even out" off, we don't touch the page at all.
  */
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
-import type { EngineStatus, Level, Msg } from '@/utils/shared';
+import { createOutputStage } from '@/utils/audio';
+import { isNeutral, type DynMode, type EngineStatus, type Level, type Msg } from '@/utils/shared';
 
 type Hook =
   | { kind: 'routed'; gain: GainNode }
@@ -32,37 +36,34 @@ export default defineContentScript({
     w.__siteVolume = true;
 
     let level: Level = { v: 1, m: false };
-    let limiterOn = true;
+    let mode: DynMode = 'limit';
     let ctx: AudioContext | null = null;
-    let limiter: DynamicsCompressorNode | null = null;
+    let out: ReturnType<typeof createOutputStage> | null = null;
     let waitingForGesture = false;
     const hooks = new WeakMap<HTMLMediaElement, Hook>();
     const seen = new Set<WeakRef<HTMLMediaElement>>();
+    const busy = new WeakSet<HTMLMediaElement>();
 
     const target = () => (level.m ? 0 : level.v);
-    const untouched = () => !level.m && level.v === 1;
 
     function routable(el: HTMLMediaElement): boolean {
       const src = el.currentSrc || el.src;
-      if (!src) return false; // decide once we know the source
-      // DRM-protected media (Netflix, Prime, Disney+…) is silent through Web Audio.
-      if (el.mediaKeys) return false;
+      if (!src) return false;
+      if (el.mediaKeys) return false; // DRM (Netflix, Prime, Disney+, Spotify…) is silent through Web Audio
       if (src.startsWith('blob:') || src.startsWith('data:')) return true; // MSE players (YouTube, Twitch…)
       try {
         if (new URL(src, location.href).origin === location.origin) return true;
       } catch {
         return false;
       }
-      // Cross-origin: only safe if it was fetched with CORS and actually loaded.
-      return el.crossOrigin !== null && el.readyState >= 1;
+      return el.crossOrigin !== null && el.readyState >= 1; // cross-origin is only safe with CORS
     }
 
     function getCtx(): AudioContext {
       if (!ctx) {
         ctx = new AudioContext({ latencyHint: 'playback' });
-        limiter = ctx.createDynamicsCompressor();
-        limiter.connect(ctx.destination);
-        configureLimiter();
+        out = createOutputStage(ctx);
+        out.set(mode);
         // If the browser lets the context start later than we waited, upgrade to boost then.
         ctx.onstatechange = () => {
           if (ctx?.state === 'running') void applyAll();
@@ -71,24 +72,12 @@ export default defineContentScript({
       return ctx;
     }
 
-    function configureLimiter() {
-      if (!limiter || !ctx) return;
-      const t = ctx.currentTime;
-      // Ratio 1 = transparent. Otherwise a fast, hard-knee limiter just under 0 dBFS.
-      limiter.threshold.setValueAtTime(limiterOn ? -3 : 0, t);
-      limiter.knee.setValueAtTime(0, t);
-      limiter.ratio.setValueAtTime(limiterOn ? 20 : 1, t);
-      limiter.attack.setValueAtTime(0.002, t);
-      limiter.release.setValueAtTime(0.15, t);
-    }
-
     async function contextRunning(): Promise<boolean> {
       const c = getCtx();
       if (c.state === 'running') return true;
-      // Without a user gesture resume() can hang, so don't await it blindly.
       const activated = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } })
         .userActivation?.hasBeenActive;
-      if (activated === false) return false;
+      if (activated === false) return false; // resume() would hang without a user gesture
       try {
         await Promise.race([c.resume(), new Promise((r) => setTimeout(r, 1000))]);
       } catch {
@@ -110,7 +99,6 @@ export default defineContentScript({
       addEventListener('keydown', go, true);
     }
 
-    const busy = new WeakSet<HTMLMediaElement>();
     async function applyTo(el: HTMLMediaElement) {
       if (busy.has(el)) return; // a routing attempt is already in flight for this element
       busy.add(el);
@@ -134,16 +122,14 @@ export default defineContentScript({
         return;
       }
 
-      if (untouched()) {
+      if (isNeutral(level)) {
         // Give back control of anything we were holding in fallback mode.
         if (hook?.kind === 'fallback' && el.volume === hook.ours) el.volume = hook.baseVolume;
         hooks.delete(el);
         return;
       }
 
-      // Only decide once the element is actually playing: by then the real source and any
-      // DRM keys are attached, so we never route something that would go silent.
-      if (el.paused || el.readyState < 2) return;
+      if (el.paused || el.readyState < 2) return; // decide once it's really playing
 
       if (routable(el) && (await contextRunning())) {
         try {
@@ -151,7 +137,7 @@ export default defineContentScript({
           const source = c.createMediaElementSource(el);
           const gain = c.createGain();
           gain.gain.value = t;
-          source.connect(gain).connect(limiter!);
+          source.connect(gain).connect(out!.input);
           if (hook?.kind === 'fallback' && el.volume === hook.ours) el.volume = hook.baseVolume;
           hooks.set(el, { kind: 'routed', gain });
           return;
@@ -172,7 +158,6 @@ export default defineContentScript({
     function track(el: HTMLMediaElement) {
       for (const r of seen) if (r.deref() === el) return;
       seen.add(new WeakRef(el));
-      // Re-evaluate when the source is known / changes.
       el.addEventListener('playing', () => void applyTo(el).then(report));
       void applyTo(el);
     }
@@ -182,6 +167,7 @@ export default defineContentScript({
     }
 
     async function applyAll() {
+      out?.set(mode);
       for (const r of [...seen]) {
         const el = r.deref();
         if (!el) seen.delete(r);
@@ -199,7 +185,6 @@ export default defineContentScript({
         const h = hooks.get(el);
         if (h?.kind === 'routed') routed++;
         else if (h?.kind === 'fallback') fallback++;
-        else if (!el.paused && !untouched()) fallback++; // playing but not yet controllable
       }
       return { media, routed, fallback, needsGesture: waitingForGesture };
     }
@@ -226,10 +211,7 @@ export default defineContentScript({
       const msg = raw as Msg;
       if (msg.type === 'engine:apply') {
         level = msg.level;
-        if (limiterOn !== msg.limiter) {
-          limiterOn = msg.limiter;
-          configureLimiter();
-        }
+        mode = msg.mode;
         // Respond once routing has settled so the popup shows an accurate status.
         void applyAll().then(() => sendResponse(status()));
         return true;
@@ -244,11 +226,10 @@ export default defineContentScript({
     browser.runtime
       .sendMessage({ type: 'engine:hello' } satisfies Msg)
       .then((r: unknown) => {
-        const res = r as { level: Level; limiter: boolean } | undefined;
+        const res = r as { level: Level; mode: DynMode } | undefined;
         if (!res) return;
         level = res.level;
-        limiterOn = res.limiter;
-        configureLimiter();
+        mode = res.mode;
         void applyAll();
       })
       .catch(() => {});

@@ -46,3 +46,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 #otherList li input { grid-column: 2 / 4; }
 #otherList li .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; text-align: center; }
+
+.toggle small { color: var(--muted); }
+.warn.info { background: var(--card); color: var(--fg); }
+#otherList li button.allow { grid-column: 3; padding: 2px 6px; font-size: 11px; }
+.notice .link { padding: 0; }

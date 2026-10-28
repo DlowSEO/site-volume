@@ -30,3 +30,14 @@ Load `.output/chrome-mv3` unpacked, pin the icon. For each site: play something,
 - [ ] Back to 100% → page behaves exactly as without the extension
 - [ ] Dark mode popup looks right
 - [ ] chrome://extensions → no errors on the extension card
+
+## v0.2 checks
+- [ ] **Even out volume**: on a YouTube video with quiet speech + loud music/ads, tick it — loud bits quieter, quiet bits louder; badge shows ≈ at 100%
+- [ ] **Force boost** on Netflix/Spotify: popup shows "can't be boosted" + **Use Force boost** → Chrome asks once for the capture permission → audio gets louder above 100%
+- [ ] Force boost: note what full screen does (expect browser bars may show) and whether Chrome shows a sharing/recording icon
+- [ ] Force boost off → normal audio straight away, no silence
+- [ ] Force boost + Remember: close and reopen the site → opening the popup restarts the boost
+- [ ] **Other tabs**: with two sites playing, adjust the background tab's slider without switching
+- [ ] A tab without access shows **Allow** → "Allow on all sites" prompt → its slider appears
+- [ ] Firefox: load `.output/firefox-mv3` temporarily; per-site volume, Remember, Even out work; no Force boost option shown
+- [ ] Edge: load `.output/edge-mv3` unpacked; same as Chrome
