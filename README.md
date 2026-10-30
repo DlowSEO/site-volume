@@ -4,7 +4,7 @@
 
 Set BBC iPlayer to 70% and YouTube to 150% once — it remembers every visit.
 
-## Features (v0.2)
+## Features (v0.3.0)
 - Volume 0–200% per site (unlock up to 600% with a hearing/speaker warning)
 - Remembered per site, applied automatically when you visit
 - Built-in limiter on by default to stop boosted audio distorting
@@ -14,8 +14,11 @@ Set BBC iPlayer to 70% and YouTube to 150% once — it remembers every visit.
 - **Force boost** per site (Chrome/Edge, opt-in) — captures the tab so boost works on *any* site, including Netflix/Spotify. Off by default because tab capture can affect full screen
 - Level shown on the toolbar icon
 - Other tabs playing sound: jump to, mute, or adjust — without switching tabs (optional "Allow on all sites" to control every tab)
-- Shortcuts: Alt+Shift+↑ / ↓ (±10%), Alt+Shift+M (mute) — change at chrome://extensions/shortcuts
+- Shortcuts: Alt+Shift+↑ / ↓ (±10%), Alt+Shift+M (mute); on Mac Ctrl+Shift+↑ / ↓ / M — change at chrome://extensions/shortcuts
+- Keyboard: arrow keys in the popup move 2% (Shift = 10%), Home/End = 0% / max
 - Light/dark theme follows your system
+- Welcome page on first install: how to pin the icon (shows when it's pinned) and get started
+- One-time, polite "leave a rating" prompt after a few days of regular use
 
 ## Privacy & permissions
 - **No install-time warnings.** Uses `activeTab` (works on the tab you click the icon on) and asks for access to a site only when you tick **Remember** for that site.
@@ -30,19 +33,21 @@ Safety rules so it never makes a page silent:
 - Chrome won't start audio processing until you've interacted with the page; until then the popup asks you to click the page once.
 - At 100% and unmuted the page is left completely untouched.
 
-## Known limitations (v0.2)
+## Known limitations (v0.3.0)
 - Without Force boost, boost above 100% isn't possible on DRM streaming sites (lowering volume works).
 - Force boost starts when you open the popup or use a shortcut on that tab (Chrome requires that click); it isn't available in Firefox.
 - Video embedded from another site (e.g. a YouTube embed on a blog) is only controlled if that site is also remembered.
 - Sound made directly with Web Audio by the page (some games, web synths) isn't controlled yet.
+- Players inside *closed* shadow roots can't be reached (open shadow roots are fine).
 
 ## Load it in Firefox (temporary)
 `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick `.output/firefox-mv3/manifest.json`
 
 ## Load it in Chrome (unpacked)
 1. `chrome://extensions` → turn on **Developer mode**
-2. **Load unpacked** → select `.output/chrome-mv3`
+2. **Load unpacked** → select the **Load in Chrome** folder (a visible copy of `.output/chrome-mv3`; `.output` is hidden in Finder — Cmd+Shift+. shows it)
 3. Pin it from the puzzle-piece menu
+4. After a rebuild, click ↻ on the extension's card
 
 ## Development
 > `node_modules` was installed from a Linux VM. On your Mac run `rm -rf node_modules && npm install` once first.
@@ -55,5 +60,17 @@ npm run build:firefox # Firefox (MV3) build → .output/firefox-mv3
 npm run build:all    # Chrome + Edge + Firefox
 npm run zip          # store-ready zip
 npm run compile      # type-check
+npm run test:e2e     # end-to-end test: real Chromium, measures the actual audio output
+npm run store:assets # regenerate the store screenshots and promo tiles in store/
 ```
+First time only for the e2e test: `npx playwright install chromium`.
 Built with [WXT](https://wxt.dev) + TypeScript, no UI framework (popup JS ≈ 6 kB).
+
+## Store listing
+Copy, permission justifications and image list: [docs/STORE_LISTING.md](docs/STORE_LISTING.md). Images: `store/`.
+
+## Privacy
+[PRIVACY.md](PRIVACY.md): no data collected, no network requests.
+
+## Licence
+[MIT](LICENSE)

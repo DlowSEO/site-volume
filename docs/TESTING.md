@@ -1,5 +1,7 @@
 # Manual test checklist
 
+Automated: `npm run test:e2e` covers volume accuracy, mute, keyboard/wheel/trackpad, Remember (incl. rapid dragging), reload, per-site isolation, shadow DOM and cross-origin fallback. The list below is what still needs a human: real sites, full screen, permission prompts, Force boost, Firefox/Edge.
+
 Load `.output/chrome-mv3` unpacked, pin the icon. For each site: play something, open the popup.
 
 | # | Site | Set 150% | Louder? | Full screen OK? | Tick Remember → reload → still 150%? | Popup message correct? | Notes |
@@ -23,7 +25,7 @@ Load `.output/chrome-mv3` unpacked, pin the icon. For each site: play something,
 - [ ] Boosted audio isn't distorted at 200% (limiter); turn limiter off later to compare
 - [ ] 600% unlock shows the warning first
 - [ ] Mouse wheel in popup changes volume; Shift = 10% steps
-- [ ] Shortcuts Alt+Shift+↑/↓/M work without opening the popup
+- [ ] Shortcuts Alt+Shift+↑/↓/M (Mac: Ctrl+Shift+↑/↓/M) work without opening the popup
 - [ ] Badge shows level / M, blank at 100%
 - [ ] "Other tabs playing sound" lists background tabs; mute and go-to-tab work
 - [ ] Headphones / Bluetooth switch mid-playback keeps sound

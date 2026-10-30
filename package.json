@@ -2,7 +2,7 @@
   "name": "site-volume",
   "description": "Remember and boost volume per website. Full screen still works. No ads, no tracking.",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -16,10 +16,22 @@
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare",
     "zip:firefox": "wxt zip -b firefox --mv3",
-    "build:all": "wxt build && wxt build -b edge && wxt build -b firefox --mv3"
+    "build:all": "wxt build && wxt build -b edge && wxt build -b firefox --mv3",
+    "test:e2e": "wxt build --mode e2e && node tests/e2e.cjs",
+    "store:assets": "wxt build --mode e2e && node scripts/store-assets.cjs"
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "wxt": "0.21.4"
-  }
+    "wxt": "0.21.4",
+    "playwright": "1.63.0"
+  },
+  "homepage": "https://github.com/DlowSEO/site-volume#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DlowSEO/site-volume.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DlowSEO/site-volume/issues"
+  },
+  "license": "MIT"
 }

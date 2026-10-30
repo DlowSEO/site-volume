@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import {
   ALL_SITES, CAN_FORCE, DEFAULT_LEVEL, gainToPos, getSettings, getSiteLevel, getTabLevel, hostOf,
-  originsFor, pct, posToGain, siteKey, type EngineStatus, type Level, type Msg, type Settings,
+  originsFor, pct, posToGain, tabKey, type EngineStatus, type Level, type Msg, type Settings, type TabLevel,
 } from '@/utils/shared';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -50,6 +50,11 @@ async function init() {
 
   buildPresets();
   render();
+  // Show the user's actual mute shortcut (it differs on Mac and can be changed).
+  void browser.commands.getAll().then((cmds) => {
+    const k = cmds.find((c) => c.name === 'toggle-mute')?.shortcut;
+    $('mute').title = k ? `Mute (${k})` : 'Mute';
+  });
   renderNotice(res.status);
   bind();
   void renderOthers();
@@ -79,7 +84,7 @@ function render() {
   $('forceHint').hidden = !level.f;
   $('rememberHint').textContent = remember
     ? 'Saved. Applies automatically every time you visit.'
-    : 'Off: this setting lasts until you close the tab.';
+    : 'Off: applies to this tab only, while you stay on this site.';
   $('unlock').hidden = settings.maxBoost >= 6 || !$('unlockWarn').hidden;
   document.querySelectorAll<HTMLButtonElement>('#presets button').forEach((b) => {
     b.setAttribute('aria-pressed', String(!level.m && pct(level.v) === Number(b.dataset.v)));
@@ -131,9 +136,9 @@ async function toggleForce(on: boolean) {
     // Request straight from the click (no awaits before it, or Chrome drops the user gesture).
     // Already granted → resolves true with no prompt. If the prompt closes the popup,
     // the note below means reopening the popup starts Force boost.
-    void browser.storage.session.set({ [`tab:${tabId}`]: { ...level, f: true } });
+    void browser.storage.session.set({ [tabKey(tabId)]: { level: { ...level, f: true }, host } satisfies TabLevel });
     if (!(await browser.permissions.request({ permissions: ['tabCapture'] }))) {
-      await browser.storage.session.set({ [`tab:${tabId}`]: level });
+      await browser.storage.session.set({ [tabKey(tabId)]: { level, host } satisfies TabLevel });
       render();
       return;
     }
@@ -150,12 +155,17 @@ async function set(next: Level) {
   if (inflight) return; // coalesce rapid slider moves
   inflight = true;
   let st: EngineStatus | null = null;
-  while (pending) {
-    const l = pending;
-    pending = null;
-    st = (await browser.runtime.sendMessage({ type: 'popup:set', tabId, level: l, remember } satisfies Msg)) as EngineStatus | null;
+  try {
+    while (pending) {
+      const l = pending;
+      pending = null;
+      st = (await browser.runtime.sendMessage({ type: 'popup:set', tabId, level: l, remember } satisfies Msg)) as EngineStatus | null;
+    }
+  } catch {
+    st = null; // background restarted mid-message; the next change retries
+  } finally {
+    inflight = false;
   }
-  inflight = false;
   if (st) renderNotice(st);
   setTimeout(refreshStatus, 600);
 }
@@ -170,6 +180,23 @@ async function refreshStatus() {
 
 function bind() {
   const slider = $<HTMLInputElement>('slider');
+  // Arrow keys work as soon as the popup opens.
+  slider.focus();
+  // The native range has 1000 tiny steps; make the keyboard move in useful ones instead.
+  slider.addEventListener('keydown', (e) => {
+    const small = e.shiftKey ? 0.1 : 0.02;
+    const max = settings.maxBoost;
+    let v: number | null = null;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') v = level.v + small;
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') v = level.v - small;
+    else if (e.key === 'PageUp') v = level.v + 0.1;
+    else if (e.key === 'PageDown') v = level.v - 0.1;
+    else if (e.key === 'Home') v = 0;
+    else if (e.key === 'End') v = max;
+    if (v === null) return;
+    e.preventDefault();
+    set({ ...level, v: Math.min(max, Math.max(0, Math.round(v * 100) / 100)), m: false });
+  });
   slider.addEventListener('input', () => {
     let v = posToGain(Number(slider.value), settings.maxBoost);
     if (Math.abs(v - 1) < 0.03) v = 1; // gentle snap to 100%
@@ -177,10 +204,20 @@ function bind() {
   });
 
   // Mouse wheel anywhere in the popup: 2% steps, Shift for 10%.
+  // Trackpads send dozens of tiny wheel events per swipe, so step once per ~one wheel notch of movement.
+  let wheelAcc = 0;
+  let wheelIdle: ReturnType<typeof setTimeout> | undefined;
   document.addEventListener('wheel', (e) => {
-    if ((e.target as HTMLElement).closest('#otherList')) return;
+    if ((e.target as Element | null)?.closest?.('#otherList')) return;
     e.preventDefault();
-    const step = (e.shiftKey ? 0.1 : 0.02) * (e.deltaY > 0 || e.deltaX > 0 ? -1 : 1);
+    const scale = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1; // lines / pages → px
+    const d = (Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX) * scale;
+    wheelAcc += d;
+    clearTimeout(wheelIdle);
+    wheelIdle = setTimeout(() => (wheelAcc = 0), 200);
+    if (Math.abs(wheelAcc) < 50) return;
+    const step = (e.shiftKey ? 0.1 : 0.02) * (wheelAcc > 0 ? -1 : 1);
+    wheelAcc = 0;
     const v = Math.min(settings.maxBoost, Math.max(0, Math.round((level.v + step) * 100) / 100));
     set({ ...level, v, m: false });
   }, { passive: false });
@@ -202,7 +239,7 @@ function bind() {
       void browser.storage.session.remove('pendingRemember');
     } else {
       remember = false;
-      await browser.storage.sync.remove(siteKey(host));
+      await browser.runtime.sendMessage({ type: 'popup:forget', tabId } satisfies Msg);
       // Drop the site's own permission (does nothing if "all sites" was granted).
       await browser.permissions.remove({ origins }).catch(() => {});
     }
@@ -262,7 +299,7 @@ async function renderOthers() {
     if (h) {
       const saved = await getSiteLevel(h);
       const rem = !!saved;
-      let cur: Level = saved ?? (await getTabLevel(id)) ?? DEFAULT_LEVEL;
+      let cur: Level = (await getTabLevel(id, h)) ?? saved ?? DEFAULT_LEVEL;
       const pctEl = document.createElement('span');
       pctEl.className = 'pct';
       pctEl.textContent = cur.m ? 'Muted' : `${pct(cur.v)}%`;
@@ -275,7 +312,18 @@ async function renderOthers() {
         if (Math.abs(v - 1) < 0.03) v = 1;
         cur = { ...cur, v: Math.round(v * 100) / 100, m: false };
         pctEl.textContent = `${pct(cur.v)}%`;
-        void browser.runtime.sendMessage({ type: 'popup:set', tabId: id, level: cur, remember: rem } satisfies Msg);
+        sendOther();
+      };
+      // Coalesce rapid moves: one message in flight per tab, the latest value always sent.
+      let busy = false, again = false;
+      const sendOther = async () => {
+        if (busy) { again = true; return; }
+        busy = true;
+        do {
+          again = false;
+          await browser.runtime.sendMessage({ type: 'popup:set', tabId: id, level: cur, remember: rem } satisfies Msg).catch(() => {});
+        } while (again);
+        busy = false;
       };
       li.append(pctEl, s);
     } else {
@@ -290,4 +338,32 @@ async function renderOthers() {
   }
 }
 
+// ---------- Review prompt ----------
+// Store ratings drive installs. Ask once, politely, only after someone has clearly found it useful.
+const REVIEW_URL = import.meta.env.FIREFOX
+  ? 'https://addons.mozilla.org/firefox/addon/site-volume/reviews/'
+  : import.meta.env.EDGE
+    ? `https://microsoftedge.microsoft.com/addons/detail/${browser.runtime.id}`
+    : `https://chromewebstore.google.com/detail/${browser.runtime.id}/reviews`;
+
+interface Usage { opens: number; first: number; done?: boolean }
+async function maybeAskForReview() {
+  const { usage } = (await browser.storage.local.get('usage')) as { usage?: Usage };
+  const u: Usage = usage ?? { opens: 0, first: Date.now() };
+  u.opens++;
+  await browser.storage.local.set({ usage: u });
+  const days = (Date.now() - u.first) / 86_400_000;
+  if (u.done || u.opens < 12 || days < 3) return;
+  const box = $('review');
+  box.hidden = false;
+  const finish = () => {
+    box.hidden = true;
+    void browser.storage.local.set({ usage: { ...u, done: true } });
+  };
+  $<HTMLAnchorElement>('reviewLink').href = REVIEW_URL;
+  $('reviewLink').onclick = finish;
+  $('reviewNo').onclick = finish;
+}
+
 void init();
+void maybeAskForReview();

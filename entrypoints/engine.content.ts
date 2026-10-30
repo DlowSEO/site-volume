@@ -19,6 +19,7 @@
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { createOutputStage } from '@/utils/audio';
+import { MEDIA_EVENT } from '@/utils/events';
 import { isNeutral, type DynMode, type EngineStatus, type Level, type Msg } from '@/utils/shared';
 
 type Hook =
@@ -66,7 +67,11 @@ export default defineContentScript({
         out.set(mode);
         // If the browser lets the context start later than we waited, upgrade to boost then.
         ctx.onstatechange = () => {
-          if (ctx?.state === 'running') void applyAll();
+          if (ctx?.state === 'running') return void applyAll();
+          // Routed media goes silent if the context stops (e.g. audio device change).
+          // Try to resume straight away; failing that, on the next click/keypress.
+          if (ctx && ctx.state !== 'closed' && routedCount() > 0)
+            void contextRunning().then((ok) => ok || waitForGesture());
         };
       }
       return ctx;
@@ -84,6 +89,15 @@ export default defineContentScript({
         /* ignore */
       }
       return (c.state as AudioContextState) === 'running';
+    }
+
+    function routedCount() {
+      let n = 0;
+      for (const r of seen) {
+        const el = r.deref();
+        if (el && hooks.get(el)?.kind === 'routed') n++;
+      }
+      return n;
     }
 
     function waitForGesture() {
@@ -158,7 +172,17 @@ export default defineContentScript({
     function track(el: HTMLMediaElement) {
       for (const r of seen) if (r.deref() === el) return;
       seen.add(new WeakRef(el));
-      el.addEventListener('playing', () => void applyTo(el).then(report));
+      el.addEventListener('playing', () => void applyTo(el));
+      // The page changed its own volume while we hold the element at a fallback level:
+      // treat that as the new base so we don't undo the page's volume control.
+      el.addEventListener('volumechange', () => {
+        const h = hooks.get(el);
+        if (h?.kind === 'fallback' && el.volume !== h.ours) {
+          h.baseVolume = el.volume;
+          h.ours = Math.min(1, el.volume * target());
+          el.volume = h.ours;
+        }
+      });
       void applyTo(el);
     }
 
@@ -166,14 +190,35 @@ export default defineContentScript({
       root.querySelectorAll<HTMLMediaElement>('video, audio').forEach(track);
     }
 
+    // Players built as web components keep their <video> inside a shadow root, where neither
+    // querySelectorAll nor the document-level 'play' listener reaches. Look inside open shadow
+    // roots, but only once the user actually wants a change on this page.
+    const shadowRoots = new WeakSet<ShadowRoot>();
+    function watchShadow(sr: ShadowRoot) {
+      if (shadowRoots.has(sr)) return;
+      shadowRoots.add(sr);
+      sr.addEventListener('play', onPlay, true);
+      observer.observe(sr, { childList: true, subtree: true });
+    }
+    function scanDeep(root: ParentNode = document) {
+      scan(root);
+      for (const el of root.querySelectorAll('*')) {
+        const sr = el.shadowRoot;
+        if (sr) {
+          watchShadow(sr);
+          scanDeep(sr);
+        }
+      }
+    }
+
     async function applyAll() {
       out?.set(mode);
+      if (!isNeutral(level)) scanDeep();
       for (const r of [...seen]) {
         const el = r.deref();
         if (!el) seen.delete(r);
         else await applyTo(el);
       }
-      report();
     }
 
     function status(): EngineStatus {
@@ -189,21 +234,28 @@ export default defineContentScript({
       return { media, routed, fallback, needsGesture: waitingForGesture };
     }
 
-    function report() {
-      browser.runtime.sendMessage({ type: 'engine:report', status: status() } satisfies Msg).catch(() => {});
-    }
-
     // Catch media as it appears. 'play' doesn't bubble but is visible in the capture phase.
-    document.addEventListener('play', (e) => {
+    function onPlay(e: Event) {
       if (e.target instanceof HTMLMediaElement) track(e.target);
-    }, true);
-    new MutationObserver((muts) => {
+    }
+    document.addEventListener('play', onPlay, true);
+    // Media the page plays without adding it to the document (new Audio().play()),
+    // announced by the main-world helper.
+    document.addEventListener(MEDIA_EVENT, (e) => {
+      const el = (e as FocusEvent).relatedTarget;
+      if (el instanceof HTMLMediaElement) track(el);
+    });
+    const observer = new MutationObserver((muts) => {
       for (const m of muts)
         for (const n of m.addedNodes) {
           if (n instanceof HTMLMediaElement) track(n);
-          else if (n instanceof Element && n.firstElementChild) scan(n);
+          else if (n instanceof Element && n.firstElementChild) {
+            if (isNeutral(level)) scan(n);
+            else scanDeep(n);
+          }
         }
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => scan());
     scan();
 

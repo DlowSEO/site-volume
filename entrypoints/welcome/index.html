@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Welcome to Site Volume</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="/icon/128.png" alt="" width="56" height="56" />
+        <div>
+          <h1>Site Volume is installed</h1>
+          <p class="lead">Set a volume for each website once. It remembers.</p>
+        </div>
+      </header>
+
+      <ol class="steps">
+        <li id="stepPin">
+          <h2>Pin it to your toolbar</h2>
+          <p>Click the <span class="puzzle" aria-label="puzzle piece"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg></span> puzzle piece at the top right of the browser, then the pin next to <b>Site Volume</b>.</p>
+          <p id="pinStatus" class="status" hidden></p>
+        </li>
+        <li>
+          <h2>Play something and click the icon</h2>
+          <p>Drag the slider, use the presets, or scroll over the popup. Up to 200% with a built-in limiter so boosted sound doesn't crackle.</p>
+        </li>
+        <li>
+          <h2>Tick <b>Remember</b></h2>
+          <p>That site gets the same volume every time you visit. Your browser asks once for access to that one site, which is how Site Volume avoids needing access to every site you visit.</p>
+        </li>
+      </ol>
+
+      <section class="grid">
+        <div class="card">
+          <h3>Shortcuts</h3>
+          <ul id="shortcuts"><li>Loading…</li></ul>
+          <p class="small" id="shortcutHint">Change them at <code id="shortcutsUrl">chrome://extensions/shortcuts</code></p>
+        </div>
+        <div class="card">
+          <h3>Good to know</h3>
+          <ul>
+            <li><b>Even out volume</b> makes loud ads and quiet speech closer together.</li>
+            <li id="forceTip"><b>Force boost</b> works on Netflix, Spotify and other protected players.</li>
+            <li>Full screen keeps working.</li>
+          </ul>
+        </div>
+      </section>
+
+      <footer>No ads · No tracking · No data collected · Open source</footer>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

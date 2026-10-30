@@ -51,3 +51,7 @@ footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); 
 .warn.info { background: var(--card); color: var(--fg); }
 #otherList li button.allow { grid-column: 3; padding: 2px 6px; font-size: 11px; }
 .notice .link { padding: 0; }
+
+.review { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--card); font-size: 12px; }
+.review a { color: var(--accent); }
+.review button.link { margin-left: 4px; color: var(--muted); font-size: 12px; }

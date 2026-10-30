@@ -2,19 +2,21 @@ import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import {
   ABSOLUTE_MAX, CAN_FORCE, DEFAULT_LEVEL, badgeText, clamp, dynMode, getSettings, getSiteLevel,
-  getTabLevel, hostOf, originsFor, siteKey, tabKey, type EngineStatus, type Level, type Msg,
+  getTabLevel, hostOf, originsFor, siteKey, tabKey, type EngineStatus, type Level, type Msg, type TabLevel,
 } from '@/utils/shared';
 
 const ENGINE_ID = 'site-volume-engine';
 const ENGINE_FILE = '/content-scripts/engine.js' as const;
+const HELPER_ID = 'site-volume-main-world';
+const HELPER_FILE = '/content-scripts/main-world.js' as const;
 const NEUTRAL: Level = { v: 1, m: false };
 
 export default defineBackground(() => {
   // ---------- Content script registration follows the sites the user has allowed ----------
   async function syncRegistration() {
     const { origins = [] } = await browser.permissions.getAll();
-    const existing = await browser.scripting.getRegisteredContentScripts({ ids: [ENGINE_ID] });
-    if (existing.length) await browser.scripting.unregisterContentScripts({ ids: [ENGINE_ID] });
+    const existing = await browser.scripting.getRegisteredContentScripts({ ids: [ENGINE_ID, HELPER_ID] });
+    if (existing.length) await browser.scripting.unregisterContentScripts({ ids: existing.map((s) => s.id) });
     if (!origins.length) return;
     await browser.scripting.registerContentScripts([
       {
@@ -27,8 +29,27 @@ export default defineBackground(() => {
         persistAcrossSessions: !import.meta.env.FIREFOX,
       },
     ]);
+    // Optional extra: catches `new Audio().play()` that never joins the page. Registered separately
+    // so a browser without main-world support still gets the engine.
+    await browser.scripting
+      .registerContentScripts([
+        {
+          id: HELPER_ID,
+          js: [HELPER_FILE],
+          matches: origins,
+          allFrames: true,
+          runAt: 'document_start',
+          world: 'MAIN',
+          persistAcrossSessions: !import.meta.env.FIREFOX,
+        },
+      ])
+      .catch(() => {});
   }
-  browser.runtime.onInstalled.addListener(() => void syncRegistration());
+  browser.runtime.onInstalled.addListener(({ reason }) => {
+    void syncRegistration();
+    // First install only: show how to pin the icon and get started.
+    if (reason === 'install') void browser.tabs.create({ url: browser.runtime.getURL('/welcome.html') });
+  });
   browser.runtime.onStartup.addListener(() => void syncRegistration());
   browser.permissions.onAdded.addListener(async (p) => {
     await syncRegistration();
@@ -36,8 +57,7 @@ export default defineBackground(() => {
     const { pendingRemember } = await browser.storage.session.get('pendingRemember');
     if (pendingRemember) {
       const { host, level } = pendingRemember as { host: string; level: Level };
-      if (await browser.permissions.contains({ origins: originsFor(host) }))
-        await browser.storage.sync.set({ [siteKey(host)]: level });
+      if (await browser.permissions.contains({ origins: originsFor(host) })) saveSite(host, level);
       await browser.storage.session.remove('pendingRemember');
     }
     // Inject straight away into already-open tabs of the newly allowed site(s).
@@ -49,18 +69,49 @@ export default defineBackground(() => {
   browser.permissions.onRemoved.addListener(() => void syncRegistration());
 
   // ---------- Per-tab state (session storage survives service-worker restarts) ----------
-  async function setTabLevel(tabId: number, l: Level) {
-    await browser.storage.session.set({ [tabKey(tabId)]: l });
+  async function setTabLevel(tabId: number, l: Level, host: string | null) {
+    await browser.storage.session.set({ [tabKey(tabId)]: { level: l, host } satisfies TabLevel });
+  }
+
+  // ---------- Saved site levels (chrome.storage.sync allows ~120 writes a minute) ----------
+  // Dragging the slider with Remember on would hit that limit within seconds and make every later
+  // change fail, so writes are throttled to one per second per site; the last value always lands.
+  const pendingSaves = new Map<string, { level: Level; timer?: ReturnType<typeof setTimeout>; last: number }>();
+  function saveSite(host: string, level: Level) {
+    const p = pendingSaves.get(host) ?? { level, last: 0 };
+    p.level = level;
+    pendingSaves.set(host, p);
+    if (p.timer) return;
+    const flush = () => {
+      p.timer = undefined;
+      p.last = Date.now();
+      const item = { [siteKey(host)]: p.level };
+      // Sync storage full (about 500 sites)? Keep it on this computer instead.
+      browser.storage.sync.set(item).then(
+        () => browser.storage.local.remove(siteKey(host)),
+        () => browser.storage.local.set(item),
+      ).catch(() => {});
+    };
+    const wait = 1000 - (Date.now() - p.last);
+    if (wait <= 0) flush();
+    else p.timer = setTimeout(flush, wait);
+  }
+  async function forgetSite(host: string) {
+    const p = pendingSaves.get(host);
+    if (p?.timer) clearTimeout(p.timer);
+    pendingSaves.delete(host);
+    await browser.storage.sync.remove(siteKey(host)).catch(() => {});
+    await browser.storage.local.remove(siteKey(host)).catch(() => {});
   }
   browser.tabs.onRemoved.addListener((id) => {
     void stopCapture(id);
-    void browser.storage.session.remove([tabKey(id), `status:${id}`, `cap:${id}`]);
+    void browser.storage.session.remove([tabKey(id), `cap:${id}`]);
   });
 
   async function levelFor(tabId: number, url?: string): Promise<Level> {
+    // This tab's latest level on this site wins (it's always current; the synced copy is throttled).
     const host = hostOf(url);
-    const site = host ? await getSiteLevel(host) : null;
-    return site ?? (await getTabLevel(tabId)) ?? DEFAULT_LEVEL;
+    return (await getTabLevel(tabId, host)) ?? (host ? await getSiteLevel(host) : null) ?? DEFAULT_LEVEL;
   }
 
   async function setBadge(tabId: number, l: Level, forced = false) {
@@ -72,6 +123,10 @@ export default defineBackground(() => {
   async function inject(tabId: number) {
     try {
       await browser.scripting.executeScript({ target: { tabId, allFrames: true }, files: [ENGINE_FILE] });
+      // Late injection: only media played after this point is caught, which is fine for new Audio().
+      await browser.scripting
+        .executeScript({ target: { tabId, allFrames: true }, files: [HELPER_FILE], world: 'MAIN' })
+        .catch(() => {});
       return true;
     } catch {
       return false; // chrome:// pages, Web Store, no access
@@ -163,14 +218,18 @@ export default defineBackground(() => {
   async function setLevel(tabId: number, level: Level, remember: boolean) {
     const { maxBoost } = await getSettings();
     level = { ...level, v: clamp(level.v, 0, Math.min(maxBoost, ABSOLUTE_MAX)) };
-    await setTabLevel(tabId, level);
     const tab = await browser.tabs.get(tabId).catch(() => null);
     const host = hostOf(tab?.url);
+    await setTabLevel(tabId, level, host);
     if (remember && host) {
-      await browser.storage.sync.set({ [siteKey(host)]: level });
+      saveSite(host, level);
       // Every open tab of this site follows.
       const tabs = await browser.tabs.query({ url: originsFor(host) }).catch(() => []);
-      for (const t of tabs) if (t.id != null && t.id !== tabId) void applyToTab(t.id, level);
+      for (const t of tabs)
+        if (t.id != null && t.id !== tabId) {
+          const id = t.id;
+          void setTabLevel(id, level, host).then(() => applyToTab(id, level));
+        }
     }
     return applyToTab(tabId, level);
   }
@@ -200,13 +259,15 @@ export default defineBackground(() => {
           await setBadge(tabId, level);
           return { level, mode: dynMode(level, await getSettings()) };
         }
-        case 'engine:report':
-          if (tabId != null && msg.status.media > 0)
-            await browser.storage.session.set({ [`status:${tabId}`]: msg.status });
-          return undefined;
         case 'offscreen:stop': // capture ended on its own (tab closed / navigated away)
           if (!sender.tab) await browser.storage.session.remove(`cap:${msg.tabId}`);
           return undefined;
+        case 'popup:forget': {
+          const tab = await browser.tabs.get(msg.tabId).catch(() => null);
+          const host = hostOf(tab?.url);
+          if (host) await forgetSite(host);
+          return undefined;
+        }
         case 'popup:set':
           return setLevel(msg.tabId, msg.level, msg.remember);
         case 'popup:state': {
@@ -218,9 +279,13 @@ export default defineBackground(() => {
       }
       return undefined;
     };
-    if (!['engine:hello', 'engine:report', 'offscreen:stop', 'popup:set', 'popup:state'].includes(msg.type)) return;
+    if (!['engine:hello', 'offscreen:stop', 'popup:set', 'popup:state', 'popup:forget'].includes(msg.type)) return;
     if (msg.type === 'offscreen:stop' && sender.tab) return;
-    void handle().then(sendResponse);
+    // Always answer, even on an error, so the popup never waits forever.
+    void handle().then(sendResponse, (e: unknown) => {
+      console.warn('Site Volume:', msg.type, e);
+      sendResponse(null);
+    });
     return true; // async response
   });
 

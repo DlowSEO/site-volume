@@ -39,7 +39,6 @@ export type Msg =
   | { type: 'engine:hello' }
   | { type: 'engine:apply'; level: Level; mode: DynMode }
   | { type: 'engine:status' }
-  | { type: 'engine:report'; status: EngineStatus }
   | { type: 'popup:set'; tabId: number; level: Level; remember: boolean }
   | { type: 'popup:state'; tabId: number }
   | { type: 'popup:forget'; tabId: number }
@@ -76,12 +75,19 @@ export async function getSettings(): Promise<Settings> {
 export async function getSiteLevel(host: string): Promise<Level | null> {
   const k = siteKey(host);
   const r = await browser.storage.sync.get(k);
-  return (r[k] as Level) ?? null;
+  if (r[k]) return r[k] as Level;
+  // Overflow copy, used when sync storage is full (it holds ~500 sites).
+  const l = await browser.storage.local.get(k);
+  return (l[k] as Level) ?? null;
 }
 
-export async function getTabLevel(tabId: number): Promise<Level | null> {
+/** Per-tab level, stored with the site it was set on so it doesn't follow the tab to other sites. */
+export interface TabLevel { level: Level; host: string | null }
+
+export async function getTabLevel(tabId: number, host: string | null): Promise<Level | null> {
   const r = await browser.storage.session.get(tabKey(tabId));
-  return (r[tabKey(tabId)] as Level) ?? null;
+  const t = r[tabKey(tabId)] as TabLevel | undefined;
+  return t && t.level && t.host === host ? t.level : null;
 }
 
 export function clamp(v: number, lo: number, hi: number) {
@@ -91,7 +97,8 @@ export function clamp(v: number, lo: number, hi: number) {
 export const isNeutral = (l: Level) => !l.m && l.v === 1 && !l.c;
 
 export function dynMode(l: Level, s: Settings): DynMode {
-  return l.c ? 'even' : s.limiter ? 'limit' : 'off';
+  // The limiter is only needed when boosting; at or below 100% the signal path stays transparent.
+  return l.c ? 'even' : s.limiter && l.v > 1 && !l.m ? 'limit' : 'off';
 }
 
 /**
