@@ -3,7 +3,7 @@
 Everything to paste into the Chrome Web Store, Edge Add-ons and Firefox Add-ons dashboards.
 Images are in `store/` (regenerate with `npm run store:assets`). Upload zips come from `npm run zip`, `npm run zip:edge` and `npm run zip:firefox`.
 
-**Before submitting:** replace `https://github.com/DlowSEO/site-volume` (here, in `PRIVACY.md`) with the GitHub repo address.
+Repo: https://github.com/DlowSEO/site-volume · Privacy policy: https://github.com/DlowSEO/site-volume/blob/main/PRIVACY.md
 
 ---
 
