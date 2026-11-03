@@ -35,12 +35,22 @@ export const ABSOLUTE_MAX = 6;
 /** Force boost needs chrome.tabCapture + offscreen documents (Chromium only). */
 export const CAN_FORCE = !import.meta.env.FIREFOX;
 
+/**
+ * What the engine exposes in its own (isolated) world in each frame. The background calls these
+ * through scripting.executeScript, which answers for every frame, so it can add up the whole page.
+ * (A message to the tab only returns whichever frame answers first, often an empty ad frame.)
+ */
+export interface EngineGlobals {
+  __siteVolume?: boolean;
+  __siteVolumeApply?: (level: Level, mode: DynMode) => Promise<EngineStatus>;
+  __siteVolumeStatus?: () => EngineStatus;
+}
+
 export type Msg =
   | { type: 'engine:hello' }
-  | { type: 'engine:apply'; level: Level; mode: DynMode }
-  | { type: 'engine:status' }
   | { type: 'popup:set'; tabId: number; level: Level; remember: boolean }
   | { type: 'popup:state'; tabId: number }
+  | { type: 'popup:status'; tabId: number }
   | { type: 'popup:forget'; tabId: number }
   | { type: 'offscreen:start'; tabId: number; streamId: string; level: Level; mode: DynMode }
   | { type: 'offscreen:apply'; tabId: number; level: Level; mode: DynMode }

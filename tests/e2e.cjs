@@ -46,10 +46,22 @@ const pages = {
   '/xorigin': ['text/html', `<!doctype html><button id=b onclick="a.play()">play</button>
     <button id=v onclick="a.volume=0.8">page sets 80%</button>
     <audio id=a src="http://127.0.0.1:${PORT}/tone.wav" loop></audio>`],
+  // Same-origin URL that redirects to another origin without CORS (files on a CDN): Web Audio would be silent
+  '/cdn.wav': ['redirect', `http://127.0.0.1:${PORT}/tone.wav`],
+  '/redirect': ['text/html', `<!doctype html><button id=b onclick="a.play()">play</button><audio id=a src="/cdn.wav" loop></audio>`],
+  // Cross-origin audio in the page plus ad iframes, one of them on a host the extension can't access
+  '/empty': ['text/html', '<!doctype html><p>ad</p>'],
+  '/ads': ['text/html', `<!doctype html><button id=b onclick="a.play()">play</button>
+    <audio id=a src="http://127.0.0.1:${PORT}/tone.wav" loop></audio>
+    <iframe src="/empty"></iframe><iframe src="/empty"></iframe><iframe src="http://[::1]:${PORT}/empty"></iframe>`],
+  // Nothing in the page itself; the audio plays inside an embedded player
+  '/embed': ['text/html', '<!doctype html><iframe src="/player"></iframe>'],
+  '/player': ['text/html', `<!doctype html><button id=b onclick="a.play()">play</button><audio id=a src="/tone.wav" loop></audio>`],
 };
 const server = http.createServer((req, res) => {
   const p = pages[req.url.split('?')[0]];
   if (!p) return res.writeHead(404).end();
+  if (p[0] === 'redirect') return res.writeHead(302, { location: p[1] }).end();
   res.writeHead(200, { 'content-type': p[0] }).end(p[1]);
 });
 
@@ -190,6 +202,36 @@ const near = (a, b, tol = 0.03) => Math.abs(a - b) <= b * tol + 1e-4;
     await setPos(1000);
     await sleep(1200);
     check('boost on cross-origin audio explains itself', /can't be boosted/.test(await notice()), await notice());
+
+    // --- Same-origin URL redirected to another origin: must not be routed (it would go silent) ---
+    await open('/redirect');
+    await openPopup();
+    await setPos(Math.round(posFor(0.5)));
+    await sleep(500);
+    check('redirected cross-origin audio stays audible (element volume, not Web Audio)', near(await vol(), 0.5), String(await vol()));
+    await setPos(1000);
+    await sleep(1200);
+    check('boost on redirected audio explains itself', /can't be boosted/.test(await notice()), await notice());
+
+    // --- Popup message reflects the whole page, not whichever frame answers first ---
+    // (Before the fix an empty ad frame usually won, so run it a few times.)
+    for (let i = 1; i <= 3; i++) {
+      await open('/ads');
+      await openPopup();
+      await setPos(1000);
+      await sleep(1200);
+      check(`page with ad iframes gets the right message (run ${i})`, /can't be boosted/.test(await notice()), await notice());
+    }
+    await page.goto(`http://localhost:${PORT}/embed`);
+    await page.frameLocator('iframe').locator('#b').click();
+    await sleep(1200);
+    await openPopup();
+    await setPos(Math.round(posFor(1.5)));
+    await sleep(1200);
+    check('audio in an embedded player is not reported as "no sound"', !/No sound/.test(await notice()), await notice() || '(no notice)');
+    const player = page.frames().find((f) => f.url().endsWith('/player'));
+    const frameRms = Number(await player.evaluate(() => document.documentElement.dataset.svRms ?? 'NaN'));
+    check('audio in an embedded player is boosted', near(frameRms, BASE_RMS * 1.5), `rms ${frameRms.toFixed(4)}`);
 
     // --- Review prompt stays hidden for new users ---
     check('no review prompt on first use', await popup.evaluate(() => document.getElementById('review').hidden));

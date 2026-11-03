@@ -2,7 +2,8 @@ import { browser, type Browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import {
   ABSOLUTE_MAX, CAN_FORCE, DEFAULT_LEVEL, badgeText, clamp, dynMode, getSettings, getSiteLevel,
-  getTabLevel, hostOf, originsFor, siteKey, tabKey, type EngineStatus, type Level, type Msg, type TabLevel,
+  getTabLevel, hostOf, originsFor, siteKey, tabKey, type DynMode, type EngineGlobals, type EngineStatus, type Level,
+  type Msg, type TabLevel,
 } from '@/utils/shared';
 
 const ENGINE_ID = 'site-volume-engine';
@@ -133,18 +134,41 @@ export default defineBackground(() => {
     }
   }
 
-  async function sendEngine(tabId: number, level: Level, mode: ReturnType<typeof dynMode>) {
-    const msg: Msg = { type: 'engine:apply', level, mode };
-    try {
-      return (await browser.tabs.sendMessage(tabId, msg)) as EngineStatus;
-    } catch {
-      if (!(await inject(tabId))) return null; // not injected yet (activeTab-only site)
-      try {
-        return (await browser.tabs.sendMessage(tabId, msg)) as EngineStatus;
-      } catch {
-        return null;
-      }
+  /** Adds up what each frame's engine reported; null when no frame has the engine. */
+  function total(frames: { result?: unknown }[]): EngineStatus | null {
+    let sum: EngineStatus | null = null;
+    for (const f of frames) {
+      const s = f.result as EngineStatus | null | undefined;
+      if (!s) continue;
+      sum = sum
+        ? { media: sum.media + s.media, routed: sum.routed + s.routed, fallback: sum.fallback + s.fallback,
+            needsGesture: sum.needsGesture || s.needsGesture }
+        : { ...s };
     }
+    return sum;
+  }
+
+  /** Applies a level in every frame we can reach and returns the whole page's status. */
+  async function sendEngine(tabId: number, level: Level, mode: DynMode) {
+    const run = () =>
+      browser.scripting
+        .executeScript({
+          target: { tabId, allFrames: true },
+          func: (l: Level, m: DynMode) => (window as unknown as EngineGlobals).__siteVolumeApply?.(l, m) ?? null,
+          args: [level, mode],
+        })
+        .then(total, () => null);
+    // No engine yet (activeTab-only site): inject it, then try again.
+    return (await run()) ?? ((await inject(tabId)) ? run() : null);
+  }
+
+  async function frameStatus(tabId: number) {
+    return browser.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        func: () => (window as unknown as EngineGlobals).__siteVolumeStatus?.() ?? null,
+      })
+      .then(total, () => null);
   }
 
   // ---------- Force boost (tab capture, Chromium only) ----------
@@ -276,10 +300,13 @@ export default defineBackground(() => {
           const status = await applyToTab(msg.tabId, level); // also injects via activeTab / starts Force boost
           return { level, status };
         }
+        case 'popup:status':
+          return frameStatus(msg.tabId);
       }
       return undefined;
     };
-    if (!['engine:hello', 'offscreen:stop', 'popup:set', 'popup:state', 'popup:forget'].includes(msg.type)) return;
+    if (!['engine:hello', 'offscreen:stop', 'popup:set', 'popup:state', 'popup:status', 'popup:forget'].includes(msg.type))
+      return;
     if (msg.type === 'offscreen:stop' && sender.tab) return;
     // Always answer, even on an error, so the popup never waits forever.
     void handle().then(sendResponse, (e: unknown) => {

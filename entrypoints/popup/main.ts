@@ -173,8 +173,8 @@ async function set(next: Level) {
 async function refreshStatus() {
   if (lastStatus?.forced) return;
   try {
-    const s = (await browser.tabs.sendMessage(tabId, { type: 'engine:status' } satisfies Msg)) as EngineStatus;
-    renderNotice({ ...s, forced: level.f ? lastStatus?.forced : undefined });
+    const s = (await browser.runtime.sendMessage({ type: 'popup:status', tabId } satisfies Msg)) as EngineStatus | null;
+    if (s) renderNotice({ ...s, forced: level.f ? lastStatus?.forced : undefined });
   } catch { /* ignore */ }
 }
 

@@ -20,7 +20,7 @@ import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { createOutputStage } from '@/utils/audio';
 import { MEDIA_EVENT } from '@/utils/events';
-import { isNeutral, type DynMode, type EngineStatus, type Level, type Msg } from '@/utils/shared';
+import { isNeutral, type DynMode, type EngineGlobals, type EngineStatus, type Level, type Msg } from '@/utils/shared';
 
 type Hook =
   | { kind: 'routed'; gain: GainNode }
@@ -32,7 +32,7 @@ export default defineContentScript({
   allFrames: true,
   runAt: 'document_start',
   main() {
-    const w = window as unknown as { __siteVolume?: boolean };
+    const w = window as unknown as EngineGlobals;
     if (w.__siteVolume) return; // already injected into this frame
     w.__siteVolume = true;
 
@@ -51,6 +51,18 @@ export default defineContentScript({
       const src = el.currentSrc || el.src;
       if (!src) return false;
       if (el.mediaKeys) return false; // DRM (Netflix, Prime, Disney+, Spotify…) is silent through Web Audio
+      // Chromium refuses to capture exactly the media Web Audio would play as silence: anything whose
+      // data came from another origin without CORS, including a same-origin URL that redirects to a
+      // CDN (which the URL checks below can't see). Firefox has no unprefixed captureStream.
+      const capture = (el as HTMLMediaElement & { captureStream?: () => MediaStream }).captureStream;
+      if (typeof capture === 'function') {
+        try {
+          capture.call(el).getTracks().forEach((t) => t.stop());
+          return true;
+        } catch {
+          return false;
+        }
+      }
       if (src.startsWith('blob:') || src.startsWith('data:')) return true; // MSE players (YouTube, Twitch…)
       try {
         if (new URL(src, location.href).origin === location.origin) return true;
@@ -145,7 +157,8 @@ export default defineContentScript({
 
       if (el.paused || el.readyState < 2) return; // decide once it's really playing
 
-      if (routable(el) && (await contextRunning())) {
+      const canRoute = routable(el);
+      if (canRoute && (await contextRunning())) {
         try {
           const c = getCtx();
           const source = c.createMediaElementSource(el);
@@ -158,7 +171,7 @@ export default defineContentScript({
         } catch {
           // Already captured by the page's own Web Audio graph, etc. → fall back.
         }
-      } else if (routable(el)) {
+      } else if (canRoute) {
         waitForGesture();
       }
 
@@ -259,20 +272,14 @@ export default defineContentScript({
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => scan());
     scan();
 
-    browser.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
-      const msg = raw as Msg;
-      if (msg.type === 'engine:apply') {
-        level = msg.level;
-        mode = msg.mode;
-        // Respond once routing has settled so the popup shows an accurate status.
-        void applyAll().then(() => sendResponse(status()));
-        return true;
-      }
-      if (msg.type === 'engine:status') {
-        sendResponse(status());
-        return;
-      }
-    });
+    // Called by the background in every frame at once (see EngineGlobals).
+    w.__siteVolumeApply = async (l, m) => {
+      level = l;
+      mode = m;
+      await applyAll(); // answer once routing has settled so the popup shows an accurate status
+      return status();
+    };
+    w.__siteVolumeStatus = status;
 
     // Ask the background for this site's saved level.
     browser.runtime

@@ -1,6 +1,6 @@
 # Manual test checklist
 
-Automated: `npm run test:e2e` covers volume accuracy, mute, keyboard/wheel/trackpad, Remember (incl. rapid dragging), reload, per-site isolation, shadow DOM and cross-origin fallback. The list below is what still needs a human: real sites, full screen, permission prompts, Force boost, Firefox/Edge.
+Automated: `npm run test:e2e` covers volume accuracy, mute, keyboard/wheel/trackpad, Remember (incl. rapid dragging), reload, per-site isolation, shadow DOM, cross-origin fallback (including same-origin URLs that redirect to a CDN), and popup messages on pages with ad iframes or embedded players. The list below is what still needs a human: real sites, full screen, permission prompts, Force boost, Firefox/Edge.
 
 Load `.output/chrome-mv3` unpacked, pin the icon. For each site: play something, open the popup.
 
